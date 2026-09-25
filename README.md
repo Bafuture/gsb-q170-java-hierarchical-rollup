@@ -30,3 +30,30 @@ Pair-wise GSB 标注任务仓库（第 13 批 / 170）。
 1. 在本仓库中完成提示词要求的全部内容。
 2. `./mvnw -q verify` 必须通过。
 3. 完成后在所属分支（A 或 B）上提交，产物快照的父提交必须是初始环境快照。
+
+## 实现说明（分支 A）
+
+源码位于 `src/main/java/com/example/gsb/rollup/`：
+
+- `TreeAggregator`：核心组件。每个节点缓存其子树的聚合值（sum / max / count）。
+  - `addNode(id, parentId)` 注册层级；`setValue(id, v)` / `clearValue(id)` 维护叶子指标值。
+  - `aggregate(id, type)`（及 `sum/max/count` 便捷方法）查询任意节点聚合值。
+  - `moveSubtree(id, newParentId)` 调整结构，旧挂载点与新挂载点的祖先路径分别增量重算；禁止挂到自身子孙下（防环）。
+  - `removeSubtree(id)` 删除整棵子树并同步下调祖先聚合值。
+  - `lastUpdateStats()` 返回 `UpdateStats`：节点总数、本次受影响节点数、全量重算代价（= 节点总数）及累计对比。
+  - `fullRecompute()` 全量重算，用于测试交叉校验。
+- `AggregationType`：`SUM` / `MAX` / `COUNT`（空子树分别聚合为 0、-∞、0）。
+- `UpdateStats`：单次操作与累计的代价统计记录。
+
+### 更新代价
+
+设树共 N 个节点、深度为 D、平均分支因子为 B：
+
+- 全量重算：自底向上访问每个节点，代价 O(N)。
+- 本组件的叶子更新：只沿「叶子 → 根」路径逐层用子节点缓存值重算，代价 O(D · B)，
+  且祖先聚合值不再变化时提前终止（early stop）。宽树（D 小）时优势最明显，
+  测试中 1001 个节点的宽树单次更新仅重算 2 个节点。
+- 结构变更（move/remove）：只重算旧、新挂载点的祖先路径，代价同为 O(D · B)。
+
+测试见 `src/test/java/com/example/gsb/rollup/TreeAggregatorTest.java`（18 个用例），
+覆盖增量正确性、三种聚合、结构变更、子树增删与增量/全量代价对比。
